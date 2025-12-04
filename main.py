@@ -361,38 +361,79 @@ def draw_intro():
     glLoadIdentity()
     
     glDisable(GL_LIGHTING)
-    glDisable(GL_DEPTH_TEST) # Fix: Disable depth test for 2D overlay
+    glDisable(GL_DEPTH_TEST)
     
-    # Background
-    glColor3f(0.1, 0.1, 0.2)
+    # Enable blending for transparency effects
+    glEnable(GL_BLEND)
+    glBlendFunc(GL_SRC_ALPHA, GL_ONE_MINUS_SRC_ALPHA)
+    
+    # 1. Gradient Background (Stadium Night Feel: Dark Blue/Green to Black)
     glBegin(GL_QUADS)
-    glVertex2f(0, 0); glVertex2f(window_width, 0)
-    glVertex2f(window_width, window_height); glVertex2f(0, window_height)
+    glColor3f(0.05, 0.2, 0.1) # Dark Green top
+    glVertex2f(0, window_height)
+    glVertex2f(window_width, window_height)
+    glColor3f(0.0, 0.05, 0.1) # Dark Blue/Black bottom
+    glVertex2f(window_width, 0)
+    glVertex2f(0, 0)
+    glEnd()
+
+    # 2. Decorative Elements (Field Lines Overlay)
+    glColor4f(1, 1, 1, 0.15) # Faint white
+    glLineWidth(3.0)
+    
+    # Center Circle (Decorative)
+    glPushMatrix()
+    glTranslatef(window_width/2, window_height/2, 0)
+    glBegin(GL_LINE_LOOP)
+    for i in range(60):
+        angle = 2 * math.pi * i / 60
+        glVertex2f(math.cos(angle)*180, math.sin(angle)*180)
     glEnd()
     
-    glColor3f(1, 1, 1)
+    # Center Line
+    glBegin(GL_LINES)
+    glVertex2f(0, -window_height/2)
+    glVertex2f(0, window_height/2)
+    glEnd()
+    glPopMatrix()
+
+    # 3. Title "FOOSTBALL"
+    title = "FOOSTBALL"
+    # Simple centering estimation for Times Roman 24 (approx 16px width per char average)
+    title_w = len(title) * 16 
+    title_x = window_width/2 - title_w/2
+    title_y = window_height/2 + 120
     
-    lines = [
-        "Dayananda Sagar Academy of Technology and Management",
-        "Dept of CSE",
-        "",
-        "Submitted by:",
-        "Darshan - 1DT23CS048",
-        "Angad - 1DT23CS0XX",
-        "Ayush - 1DT23CS0XX",
-        "Bhargav - 1DT23CS0XX",
-        "",
-        "Press SPACE to Start Match"
+    # Shadow
+    glColor3f(0, 0, 0)
+    draw_text(title_x + 4, title_y - 4, title, GLUT_BITMAP_TIMES_ROMAN_24)
+    # Main Text
+    glColor3f(1, 0.85, 0.2) # Gold
+    draw_text(title_x, title_y, title, GLUT_BITMAP_TIMES_ROMAN_24)
+
+    # 4. Credits
+    glColor3f(0.8, 0.9, 1.0) # Light Cyan
+    credits = [
+        "Created by:",
+        "Jatavallabhula Sarat Anirudh"
     ]
     
-    start_y = window_height / 2 + 100
-    line_height = 30
+    start_y = title_y - 60
+    for i, line in enumerate(credits):
+        w = len(line) * 9 # Helvetica 18 approx width
+        draw_text(window_width/2 - w/2, start_y - i*30, line)
+
+    # 5. Pulsing "Press Start"
+    pulse = abs(math.sin(glutGet(GLUT_ELAPSED_TIME) / 400.0))
+    # Pulsing Greenish-White
+    glColor3f(0.5 + 0.5*pulse, 1, 0.5 + 0.5*pulse) 
     
-    for i, line in enumerate(lines):
-        w = len(line) * 9
-        draw_text(window_width/2 - w/2, start_y - i*line_height, line)
+    start_msg = "- Press SPACE to Kick Off -"
+    w = len(start_msg) * 9
+    draw_text(window_width/2 - w/2, window_height/2 - 150, start_msg)
     
-    glEnable(GL_DEPTH_TEST) # Restore depth test
+    glDisable(GL_BLEND)
+    glEnable(GL_DEPTH_TEST)
     glEnable(GL_LIGHTING)
     glPopMatrix()
     glMatrixMode(GL_PROJECTION)
