@@ -64,17 +64,4 @@ The game is designed for local multiplayer on a single keyboard.
 
 ---
 
-## Credits
-
-**Dayananda Sagar Academy of Technology and Management**  
-**Department of Computer Science & Engineering**
-
-**Submitted by:**
-*   **Darshan** - 1DT23CS048
-*   **Angad** - 1DT23CS0XX
-*   **Ayush** - 1DT23CS0XX
-*   **Bhargav** - 1DT23CS0XX
-
----
-
 *Note: This project serves as an educational exploration of computer graphics and game logic implementation in Python.*
