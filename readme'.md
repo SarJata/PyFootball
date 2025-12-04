@@ -1,82 +1,80 @@
-# 11v11 AI Football Simulation
+# PyFootball: 1v1 Arcade Football Simulation
 
-A simple 3D football (soccer) simulation built in Python using **PyOpenGL** and **GLUT**.  
-This project models a basic AI-driven 11v11 match with one user-controlled player.
+**PyFootball** is a lightweight, 3D arcade-style football (soccer) simulation developed using **Python**, **PyOpenGL**, and **GLUT**. 
+
+This project demonstrates the implementation of basic game physics, AI behavior, and real-time rendering without relying on heavy game engines. It features a competitive 1v1 gameplay mode where two players compete on a large field, supported by automated goalkeepers and tactical mechanics.
 
 ---
 
-## Features
+## Project Overview
 
-- **User Control:** Move a single player using `WASD` and kick with `SPACE`.
-- **AI Players:** Teams are filled with AI agents for goalies, defenders, midfielders, and attackers.  
-- **Basic Physics:** Ball movement with friction, collision avoidance, and simple goal detection.  
-- **Game Flow:** Includes first half, halftime switch, second half, and game timer.  
-- **Scoreboard & Controls Display:** Shows score, remaining time, and player controls.  
-- **3D Field & Models:** Minimalistic rendering of field, players, and goals.
+The simulation strips down the complexities of standard football to focus on core mechanics: positioning, ball control, and timing. 
+
+### Key Features
+
+*   **1v1 Competitive Gameplay:** A focused match between two user-controlled agents (Red vs. White).
+*   **Ball Physics & Control:** Implements a "sticky" ball mechanic for dribbling, requiring opponents to actively tackle to gain possession.
+*   **Tactical Mechanics:** 
+    *   **Tackling:** Players can knock the ball loose from an opponent, triggering a temporary cooldown for the victim.
+    *   **Shooting:** The same input key is used for powerful shots when in possession.
+*   **AI Goalkeepers:** Each team is supported by an automated goalkeeper that tracks the ball and clears it from the goal area.
+*   **Dynamic Camera:** Features a high-angle, tactical view to allow players to strategize positioning on the large field.
+*   **Game Loop:** Includes a scoring system, kickoff resets, and a match timer.
 
 ---
 
 ## Controls
 
-| Key   | Action         |
-|-------|----------------|
-| W     | Move forward   |
-| A     | Move left      |
-| S     | Move backward  |
-| D     | Move right     |
-| SPACE | Kick ball      |
+The game is designed for local multiplayer on a single keyboard.
+
+| Team | Movement | Action (Kick / Tackle) |
+| :--- | :--- | :--- |
+| **Red Team** (Left) | `W`, `A`, `S`, `D` | `Left Shift` |
+| **White Team** (Right) | `Arrow Keys` | `Right Shift` |
+
+*   **Kick:** Press `Shift` while possessing the ball to shoot in your facing direction.
+*   **Tackle:** Press `Shift` when near an opponent with the ball to steal it.
 
 ---
 
-## Installation
+## Installation & Usage
 
-1. **Clone the repository:**
+### Prerequisites
+*   Python 3.x
+*   `pip` package manager
 
-```bash
-git clone <repo-url>
-cd <repo-folder>
-```
+### Setup
 
-2. **Install dependencies:**
+1.  **Clone the repository:**
+    ```bash
+    git clone <repo-url>
+    cd PyFootball
+    ```
 
-```bash
-pip install PyOpenGL PyOpenGL_accelerate
-```
+2.  **Install dependencies:**
+    This project requires `PyOpenGL` for rendering.
+    ```bash
+    pip install PyOpenGL PyOpenGL_accelerate
+    ```
 
-3. **Run the simulation:**
-
-```bash
-python main.py
-```
-
----
-
-## How It Works
-
-- **Agents:** Each player has a role (`goalie`, `def`, `mid`, `att`) and AI logic for chasing the ball and avoiding collisions.
-- **User Player:** One attacker is user-controlled. Movement and kicking are responsive but limited to the field boundaries.
-- **Ball Mechanics:** Simple 2D physics on the X-Z plane, including friction and bounce off field boundaries.
-- **AI Decision Logic:**  
-  - Top 3 closest teammates can chase the ball.  
-  - Goalies rarely leave the goal area.  
-  - Randomized aggression and speed give variation.
+3.  **Run the simulation:**
+    ```bash
+    python main.py
+    ```
 
 ---
 
 ## Credits
 
-- **Developed by:**  
-  - D - 1DT23CS048  
-  - A - 1DT23CS048  
-  - A - 1DT23CS048  
-  - S - 1DT23CS048  
+**Dayananda Sagar Academy of Technology and Management**  
+**Department of Computer Science & Engineering**
 
-- **Technologies Used:** Python, PyOpenGL, GLUT  
-
-- **Disclaimer:** This is a learning project and not intended as a professional-grade football simulation.  
+**Submitted by:**
+*   **Darshan** - 1DT23CS048
+*   **Angad** - 1DT23CS0XX
+*   **Ayush** - 1DT23CS0XX
+*   **Bhargav** - 1DT23CS0XX
 
 ---
 
-## Screenshots
-
-*(Add screenshots here if desired)*
+*Note: This project serves as an educational exploration of computer graphics and game logic implementation in Python.*

@@ -2,288 +2,227 @@ import sys
 import math
 import random
 import time
+import ctypes
 from OpenGL.GL import *
 from OpenGL.GLUT import *
 from OpenGL.GLU import *
 
 # --- Global State ---
-window_width, window_height = 1000, 700
+window_width, window_height = 1200, 800
 
 # Physics Constants
-PLAYER_SPEED = 0.06
+PLAYER_SPEED = 0.5
 BALL_FRICTION = 0.98
-KICK_STRENGTH = 0.5
-KICK_RADIUS = 3.0
-FIELD_W = 40
-FIELD_H = 28
+KICK_STRENGTH = 2.5
+FIELD_W = 90  # Drastically increased size
+FIELD_H = 60
+GOAL_WIDTH = 36 # Increased from 20
 
 # Game State
 ball_pos = [0.0, 0.0]
 ball_vel = [0.0, 0.0]
+ball_owner = None # The agent currently possessing the ball
+
 red_score = 0
 white_score = 0
 
-game_state = 'intro' # 'intro' (credits/start), 'playing'
-start_time = 0
-import sys
-import math
-import random
-import time
-from OpenGL.GL import *
-from OpenGL.GLUT import *
-from OpenGL.GLU import *
-
-# --- Global State ---
-window_width, window_height = 1000, 700
-
-# Physics Constants
-PLAYER_SPEED = 0.25
-BALL_FRICTION = 0.985
-KICK_STRENGTH = 1.3
-KICK_RADIUS = 3.0
-FIELD_W = 40
-FIELD_H = 28
-
-# Game State
-ball_pos = [0.0, 0.0]
-ball_vel = [0.0, 0.0]
-red_score = 0
-white_score = 0
-
-game_state = 'intro' # 'intro' (credits/start), 'playing'
+game_state = 'intro' # 'intro', 'playing'
 start_time = 0
 GAME_DURATION = 4 * 60 * 1000 # 4 minutes
-HALF_TIME_DURATION = 2 * 60 * 1000 # 2 minutes
-
-side_multiplier = 1 # 1 for first half, -1 for second half
-half_time_occurred = False
 
 # Input State
 key_states = {
-    'w': False, 'a': False, 's': False, 'd': False, 'space': False
+    'w': False, 'a': False, 's': False, 'd': False,
+    'up': False, 'down': False, 'left': False, 'right': False
 }
 
+# Windows Key Codes
+VK_LSHIFT = 0xA0
+VK_RSHIFT = 0xA1
+
+def is_key_pressed(vk_code):
+    # Check if key is currently down (high bit set)
+    return (ctypes.windll.user32.GetKeyState(vk_code) & 0x8000) != 0
+
 class Agent:
-    def __init__(self, team, role, home_x, home_z, is_user=False):
-        self.team = team # 'red' or 'white'
-        self.role = role # 'goalie', 'def', 'mid', 'att'
-        self.home_x = home_x
-        self.home_z = home_z
-        self.x = home_x
-        self.z = home_z
-        self.is_user = is_user
-        
-        # Randomize stats slightly
-        self.speed = PLAYER_SPEED * random.uniform(0.9, 1.1)
-        self.aggressiveness = random.uniform(0.0, 1.0) 
-        
-        # Define Zone Thresholds
-        self.chase_threshold = 12.0
-        if self.role == 'goalie': self.chase_threshold = 6.0
-        elif self.role == 'def': self.chase_threshold = 10.0
-        elif self.role == 'mid': self.chase_threshold = 14.0
-        elif self.role == 'att': self.chase_threshold = 14.0
+    def __init__(self, team, x, z, role='player'):
+        self.team = team
+        self.x = x
+        self.z = z
+        self.role = role # 'player' or 'goalie'
+        self.speed = PLAYER_SPEED
+        # Default facing direction
+        self.dir_x = 1.0 if team == 'red' else -1.0
+        self.dir_z = 0.0
+        self.tackle_cooldown = 0
 
     def update(self):
-        global ball_pos, ball_vel, agents, key_states
+        global ball_pos, ball_vel, ball_owner
         
-        # --- USER CONTROL LOGIC ---
-        if self.is_user:
-            # Movement
-            move_dx, move_dz = 0, 0
-            if key_states['w']: move_dz -= 1
-            if key_states['s']: move_dz += 1
-            if key_states['a']: move_dx -= 1
-            if key_states['d']: move_dx += 1
-            
-            # Normalize
+        if self.tackle_cooldown > 0:
+            self.tackle_cooldown -= 1
+
+        # --- Movement ---
+        move_dx, move_dz = 0, 0
+        
+        if self.role == 'player':
+            # User Control
+            if self.team == 'red':
+                if key_states['w']: move_dz -= 1
+                if key_states['s']: move_dz += 1
+                if key_states['a']: move_dx -= 1
+                if key_states['d']: move_dx += 1
+            else: # white
+                if key_states['up']: move_dz -= 1
+                if key_states['down']: move_dz += 1
+                if key_states['left']: move_dx -= 1
+                if key_states['right']: move_dx += 1
+                
+            # Normalize and Move
             dist = math.sqrt(move_dx*move_dx + move_dz*move_dz)
             if dist > 0:
-                self.x += (move_dx / dist) * self.speed * 1.2 # User is slightly faster
-                self.z += (move_dz / dist) * self.speed * 1.2
+                # Apply speed penalty if carrying the ball
+                current_speed = self.speed
+                if ball_owner == self:
+                    current_speed *= 0.85 # 15% slower when dribbling
+                
+                self.x += (move_dx / dist) * current_speed
+                self.z += (move_dz / dist) * current_speed
+                # Update facing direction
+                self.dir_x = move_dx / dist
+                self.dir_z = move_dz / dist
+        
+        elif self.role == 'goalie':
+            # Dumb Goalie Logic
+            # Stay on goal line X, track ball Z
+            goal_x = -FIELD_W + 5 if self.team == 'red' else FIELD_W - 5
             
-            # Clamp to field
-            self.x = max(-FIELD_W+1, min(FIELD_W-1, self.x))
-            self.z = max(-FIELD_H+1, min(FIELD_H-1, self.z))
+            # Move towards ball Z, clamped to goal width
+            target_z = max(-GOAL_WIDTH/2, min(GOAL_WIDTH/2, ball_pos[1]))
             
-            # Kick
-            dx = ball_pos[0] - self.x
-            dz = ball_pos[1] - self.z
-            dist_to_ball = math.sqrt(dx*dx + dz*dz)
+            # Simple P-controller movement
+            dz = target_z - self.z
+            if abs(dz) > 0.5:
+                # NERFED: Reduced speed multiplier from 0.6 to 0.35
+                move_z = math.copysign(self.speed * 0.35, dz) 
+                self.z += move_z
+                self.dir_z = math.copysign(1, move_z)
             
-            if key_states['space'] and dist_to_ball < KICK_RADIUS:
-                self.kick(hard=True)
-                key_states['space'] = False # Consume key press
+            # Keep X fixed mostly, maybe slight wobble
+            self.x = goal_x
+            self.dir_x = 1.0 if self.team == 'red' else -1.0
             
-            return # Skip AI logic for user
+            # Auto-kick if ball is close
+            dist_to_ball = math.sqrt((self.x - ball_pos[0])**2 + (self.z - ball_pos[1])**2)
+            if dist_to_ball < 4.0 and ball_owner is None:
+                # Kick away from goal
+                self.kick(force_dir_x = 1.0 if self.team == 'red' else -1.0)
 
-        # --- AI LOGIC ---
-        
-        # 1. Determine Target Position
-        target_x = self.home_x
-        target_z = self.home_z
-        
-        # Calculate distance to ball
-        dx = ball_pos[0] - self.x
-        dz = ball_pos[1] - self.z
-        dist_to_ball = math.sqrt(dx*dx + dz*dz)
-        
-        # --- Max 3 Chasers Logic ---
-        # Find teammates and rank them by distance to ball
-        teammates = [a for a in agents if a.team == self.team and not a.is_user]
-        teammates.sort(key=lambda a: math.sqrt((ball_pos[0]-a.x)**2 + (ball_pos[1]-a.z)**2))
-        
-        try:
-            rank = teammates.index(self) # 0 is closest
-        except ValueError:
-            rank = 99 # Should not happen unless self is user (handled above)
-        
-        should_chase = False
-        
-        # Only top 3 closest are allowed to consider chasing
-        if rank < 3:
-            # The absolute closest ALWAYS chases (to prevent stalling)
-            if rank == 0:
-                should_chase = True
-            # The 2nd and 3rd closest chase ONLY if within their personal threshold
-            elif dist_to_ball < self.chase_threshold:
-                should_chase = True
-        
-        # Goalie restriction: Goalie rarely leaves box even if closest
-        if self.role == 'goalie' and dist_to_ball > 10.0:
-            should_chase = False
-        
-        if should_chase:
-            bias = 0.8 
-            target_x = ball_pos[0]
-            target_z = ball_pos[1]
-            
-            # Goalie stays near goal
-            if self.role == 'goalie':
-                target_x = self.home_x 
-                target_z = max(-5, min(5, ball_pos[1])) 
-        
-        # Move towards target
-        move_dx = target_x - self.x
-        move_dz = target_z - self.z
-        
-        # --- Improved Collision Avoidance ---
-        sep_x, sep_z = 0, 0
-        collision_radius = 3.5 
-        
-        for other in agents:
-            if other is self: continue
-            dist_x = self.x - other.x
-            dist_z = self.z - other.z
-            dist = math.sqrt(dist_x*dist_x + dist_z*dist_z)
-            
-            if dist < collision_radius and dist > 0.001:
-                # Stronger repulsion force
-                force = (collision_radius - dist) / dist 
-                sep_x += dist_x * force
-                sep_z += dist_z * force
-        
-        # Apply separation heavily
-        move_dx += sep_x * 8.0 
-        move_dz += sep_z * 8.0
-        
-        move_dist = math.sqrt(move_dx*move_dx + move_dz*move_dz)
-        
-        if move_dist > 0.1:
-            self.x += (move_dx / move_dist) * self.speed
-            self.z += (move_dz / move_dist) * self.speed
-            
         # Clamp to field
-        self.x = max(-FIELD_W+1, min(FIELD_W-1, self.x))
-        self.z = max(-FIELD_H+1, min(FIELD_H-1, self.z))
+        self.x = max(-FIELD_W+2, min(FIELD_W-2, self.x))
+        self.z = max(-FIELD_H+2, min(FIELD_H-2, self.z))
         
-        # 2. Kick Logic
-        if dist_to_ball < KICK_RADIUS:
-            if random.random() < 0.1: 
-                self.kick(hard=True)
-            elif random.random() < 0.3: 
-                self.kick(hard=False)
-
-    def kick(self, hard):
-        global ball_vel, side_multiplier
+        # --- Ball Interaction ---
+        dist_to_ball = math.sqrt((self.x - ball_pos[0])**2 + (self.z - ball_pos[1])**2)
         
-        # Target Goal
+        # 1. Pick up ball (Stick)
+        # If ball is free and we touch it, we take it.
+        # Added cooldown check so you don't instantly re-grab after being tackled
+        if ball_owner is None and dist_to_ball < 3.0 and self.tackle_cooldown == 0:
+            ball_owner = self
+            ball_vel = [0, 0]
+            
+        # 2. Handle Shift Actions (Tackle / Kick)
+        is_shift = False
         if self.team == 'red':
-            goal_x = 40 * side_multiplier
+            is_shift = is_key_pressed(VK_LSHIFT)
         else:
-            goal_x = -40 * side_multiplier
+            is_shift = is_key_pressed(VK_RSHIFT)
+            
+        if is_shift and self.role == 'player':
+            # Case A: I have the ball -> Kick/Shoot
+            if ball_owner == self:
+                self.kick()
+                
+            # Case B: Opponent has ball and I am close -> Tackle
+            elif ball_owner is not None and ball_owner != self:
+                # Increased tackle range slightly
+                if dist_to_ball < 6.0: 
+                    self.tackle(ball_owner)
         
-        # Add noise to shot
-        noise_z = random.uniform(-10, 10)
-        
-        k_dx = goal_x - self.x
-        k_dz = (0 + noise_z) - self.z
-        k_len = math.sqrt(k_dx*k_dx + k_dz*k_dz)
-        
-        if k_len == 0: k_len = 1
-        
-        power = KICK_STRENGTH if hard else KICK_STRENGTH * 0.3
-        
-        ball_vel[0] = (k_dx / k_len) * power
-        ball_vel[1] = (k_dz / k_len) * power
+        # 3. Dribble (if I own the ball)
+        if ball_owner == self:
+            # Keep ball slightly in front of player
+            ball_pos[0] = self.x + self.dir_x * 2.0
+            ball_pos[1] = self.z + self.dir_z * 2.0
+            ball_vel = [0, 0]
 
+    def kick(self, force_dir_x=None):
+        global ball_owner, ball_vel
+        ball_owner = None
+        # Kick in facing direction or forced direction
+        dx = force_dir_x if force_dir_x is not None else self.dir_x
+        dz = self.dir_z
+        
+        ball_vel[0] = dx * KICK_STRENGTH
+        ball_vel[1] = dz * KICK_STRENGTH
+        
+        # Add slight cooldown to prevent instant re-grab
+        self.tackle_cooldown = 10
+        
+    def tackle(self, victim):
+        global ball_owner, ball_vel
+        # Steal/Knock loose
+        ball_owner = None
+        
+        # Apply cooldown to victim so they can't instantly grab it back
+        victim.tackle_cooldown = 60 # 1 second cooldown
+        
+        # Ball pops out in tackler's direction slightly
+        ball_vel[0] = self.dir_x * 0.5
+        ball_vel[1] = self.dir_z * 0.5
 
-# --- Setup Teams ---
+# --- Setup ---
 agents = []
 
-def setup_teams():
-    global agents, side_multiplier
+def setup_teams(kickoff_team=None):
+    global agents, ball_owner, ball_pos, ball_vel
     agents = []
-    
-    # Helper to flip X if side_multiplier is -1
-    def gx(x): return x * side_multiplier
-    
-    # Red Team 
-    # Normally starts on Left (-X) and attacks Right (+X).
-    # If side_multiplier is -1, they start on Right (+X) and attack Left (-X).
-    
-    # Goalie
-    agents.append(Agent('red', 'goalie', gx(-36), 0))
-    # Defenders
-    agents.append(Agent('red', 'def', gx(-25), -10))
-    agents.append(Agent('red', 'def', gx(-25), -3))
-    agents.append(Agent('red', 'def', gx(-25), 3))
-    agents.append(Agent('red', 'def', gx(-25), 10))
-    # Midfielders
-    agents.append(Agent('red', 'mid', gx(-10), -12))
-    agents.append(Agent('red', 'mid', gx(-10), -4))
-    agents.append(Agent('red', 'mid', gx(-10), 4))
-    agents.append(Agent('red', 'mid', gx(-10), 12))
-    # Attackers
-    # USER PLAYER: First Red Attacker
-    agents.append(Agent('red', 'att', gx(2), -5, is_user=True))
-    agents.append(Agent('red', 'att', gx(2), 5))
-
-    # White Team
-    # Normally starts on Right (+X) and attacks Left (-X).
-    
-    # Goalie
-    agents.append(Agent('white', 'goalie', gx(36), 0))
-    # Defenders
-    agents.append(Agent('white', 'def', gx(25), -10))
-    agents.append(Agent('white', 'def', gx(25), -3))
-    agents.append(Agent('white', 'def', gx(25), 3))
-    agents.append(Agent('white', 'def', gx(25), 10))
-    # Midfielders
-    agents.append(Agent('white', 'mid', gx(10), -12))
-    agents.append(Agent('white', 'mid', gx(10), -4))
-    agents.append(Agent('white', 'mid', gx(10), 4))
-    agents.append(Agent('white', 'mid', gx(10), 12))
-    # Attackers
-    agents.append(Agent('white', 'att', gx(-2), -5))
-    agents.append(Agent('white', 'att', gx(-2), 5))
-
-def reset_game(scorer):
-    global ball_pos, ball_vel
+    ball_owner = None
     ball_pos = [0, 0]
     ball_vel = [0, 0]
-    setup_teams()
-    print(f"Score! Red: {red_score} - White: {white_score}")
+    
+    # Red Team
+    # Player
+    red_x = -5 if kickoff_team == 'red' else -30
+    agents.append(Agent('red', red_x, 0, role='player'))
+    # Goalie
+    agents.append(Agent('red', -FIELD_W+5, 0, role='goalie'))
+    
+    # White Team
+    # Player
+    white_x = 5 if kickoff_team == 'white' else 30
+    agents.append(Agent('white', white_x, 0, role='player'))
+    # Goalie
+    agents.append(Agent('white', FIELD_W-5, 0, role='goalie'))
+    
+    # Give ball to kickoff team
+    if kickoff_team == 'red':
+        ball_owner = agents[0] # Red Player
+    elif kickoff_team == 'white':
+        ball_owner = agents[2] # White Player (index 2 is white player)
+
+def reset_game(scorer):
+    global ball_pos, ball_vel, ball_owner
+    ball_pos = [0, 0]
+    ball_vel = [0, 0]
+    ball_owner = None
+    
+    # If Red scores, White gets kickoff
+    kickoff_team = 'white' if scorer == 'red' else 'red'
+    
+    setup_teams(kickoff_team)
+    print(f"Goal! {scorer.upper()} scores! {kickoff_team.upper()} Kickoff.")
 
 # --- OpenGL Boilerplate ---
 def init():
@@ -293,7 +232,7 @@ def init():
     glEnable(GL_LIGHT0)
     glEnable(GL_COLOR_MATERIAL)
     glColorMaterial(GL_FRONT_AND_BACK, GL_AMBIENT_AND_DIFFUSE)
-    glLightfv(GL_LIGHT0, GL_POSITION, [10.0, 30.0, 10.0, 0.0])
+    glLightfv(GL_LIGHT0, GL_POSITION, [10.0, 50.0, 10.0, 0.0])
 
 def reshape(w, h):
     global window_width, window_height
@@ -302,11 +241,15 @@ def reshape(w, h):
     glMatrixMode(GL_PROJECTION)
     glLoadIdentity()
     aspect = w / h if h > 0 else 1
-    view_size = 45.0
+    
+    # Increased view size to see the larger field
+    view_size = 80.0 
+    
+    # Fix: Increase Z-range significantly to prevent clipping
     if w >= h:
-        glOrtho(-view_size * aspect, view_size * aspect, -view_size, view_size, -100.0, 100.0)
+        glOrtho(-view_size * aspect, view_size * aspect, -view_size, view_size, -500.0, 500.0)
     else:
-        glOrtho(-view_size, view_size, -view_size / aspect, view_size / aspect, -100.0, 100.0)
+        glOrtho(-view_size, view_size, -view_size / aspect, view_size / aspect, -500.0, 500.0)
     glMatrixMode(GL_MODELVIEW)
 
 def draw_text(x, y, text, font=GLUT_BITMAP_HELVETICA_18):
@@ -315,6 +258,7 @@ def draw_text(x, y, text, font=GLUT_BITMAP_HELVETICA_18):
         glutBitmapCharacter(font, ord(ch))
 
 def draw_field():
+    # Grass
     glColor3f(0.1, 0.6, 0.1)
     glBegin(GL_QUADS)
     glNormal3f(0, 1, 0)
@@ -322,27 +266,54 @@ def draw_field():
     glVertex3f(FIELD_W, 0, FIELD_H+2); glVertex3f(-FIELD_W, 0, FIELD_H+2)
     glEnd()
     
+    # Lines
     glColor3f(1.0, 1.0, 1.0)
     glLineWidth(2.0)
     glBegin(GL_LINE_LOOP)
     glVertex3f(-FIELD_W+2, 0.1, -FIELD_H); glVertex3f(FIELD_W-2, 0.1, -FIELD_H)
     glVertex3f(FIELD_W-2, 0.1, FIELD_H); glVertex3f(-FIELD_W+2, 0.1, FIELD_H)
     glEnd()
+    
+    # Center Line
     glBegin(GL_LINES)
     glVertex3f(0, 0.1, -FIELD_H); glVertex3f(0, 0.1, FIELD_H)
     glEnd()
+    
+    # Center Circle
+    glBegin(GL_LINE_LOOP)
+    for i in range(36):
+        angle = 2 * math.pi * i / 36
+        glVertex3f(math.cos(angle)*10, 0.1, math.sin(angle)*10)
+    glEnd()
 
 def draw_goal(x_pos):
+    # Goal Posts
     glColor3f(0.9, 0.9, 0.9)
-    glLineWidth(4.0)
-    z_width = 8; height = 5
+    glLineWidth(6.0)
+    z_width = GOAL_WIDTH / 2
+    height = 8
+    
     glPushMatrix()
     glTranslatef(x_pos, 0, 0)
+    
+    # Frame
     glBegin(GL_LINES)
     glVertex3f(0, 0, -z_width); glVertex3f(0, height, -z_width)
     glVertex3f(0, 0, z_width); glVertex3f(0, height, z_width)
     glVertex3f(0, height, -z_width); glVertex3f(0, height, z_width)
     glEnd()
+    
+    # Netting (Visual only)
+    glLineWidth(1.0)
+    glColor3f(0.8, 0.8, 0.8)
+    glBegin(GL_LINES)
+    for i in range(10):
+        t = i / 10.0
+        # Vertical net lines
+        z = -z_width + (z_width * 2 * t)
+        glVertex3f(0, height, z); glVertex3f(-5 if x_pos > 0 else 5, 0, z)
+    glEnd()
+    
     glPopMatrix()
 
 def draw_scoreboard():
@@ -366,13 +337,12 @@ def draw_scoreboard():
     mins = int(remaining / 60000)
     secs = int((remaining % 60000) / 1000)
     
-    period = "1st Half" if not half_time_occurred else "2nd Half"
-    time_text = f"{period} - {mins:02d}:{secs:02d}"
-    
-    draw_text(window_width/2 - 50, window_height - 55, time_text)
+    time_text = f"{mins:02d}:{secs:02d}"
+    draw_text(window_width/2 - 20, window_height - 55, time_text)
     
     # Controls Help
-    draw_text(10, window_height - 30, "Controls: WASD to Move, SPACE to Kick")
+    help_text = "RED: WASD + L-Shift (Tackle/Kick)  |  WHITE: Arrows + R-Shift (Tackle/Kick)"
+    draw_text(window_width/2 - (len(help_text)*9)/2, 20, help_text)
 
     glEnable(GL_LIGHTING)
     
@@ -381,7 +351,7 @@ def draw_scoreboard():
     glPopMatrix()
     glMatrixMode(GL_MODELVIEW)
 
-def draw_credits():
+def draw_intro():
     glMatrixMode(GL_PROJECTION)
     glPushMatrix()
     glLoadIdentity()
@@ -391,42 +361,39 @@ def draw_credits():
     glLoadIdentity()
     
     glDisable(GL_LIGHTING)
-    glDisable(GL_DEPTH_TEST)
+    glDisable(GL_DEPTH_TEST) # Fix: Disable depth test for 2D overlay
     
     # Background
     glColor3f(0.1, 0.1, 0.2)
     glBegin(GL_QUADS)
-    glVertex2f(0, 0)
-    glVertex2f(window_width, 0)
-    glVertex2f(window_width, window_height)
-    glVertex2f(0, window_height)
+    glVertex2f(0, 0); glVertex2f(window_width, 0)
+    glVertex2f(window_width, window_height); glVertex2f(0, window_height)
     glEnd()
     
-    glColor3f(1.0, 1.0, 1.0)
+    glColor3f(1, 1, 1)
     
     lines = [
         "Dayananda Sagar Academy of Technology and Management",
-        "Dept. of CSE",
+        "Dept of CSE",
         "",
         "Submitted by:",
-        "D - 1DT23CS048",
-        "A - 1DT23CS048",
-        "A - 1DT23CS048",
-        "S - 1DT23CS048",
+        "Darshan - 1DT23CS048",
+        "Angad - 1DT23CS0XX",
+        "Ayush - 1DT23CS0XX",
+        "Bhargav - 1DT23CS0XX",
         "",
-        "Press SPACE or ENTER to Start Match"
+        "Press SPACE to Start Match"
     ]
     
-    start_y = window_height / 2 + 120
+    start_y = window_height / 2 + 100
     line_height = 30
     
     for i, line in enumerate(lines):
         w = len(line) * 9
         draw_text(window_width/2 - w/2, start_y - i*line_height, line)
-        
-    glEnable(GL_DEPTH_TEST)
-    glEnable(GL_LIGHTING)
     
+    glEnable(GL_DEPTH_TEST) # Restore depth test
+    glEnable(GL_LIGHTING)
     glPopMatrix()
     glMatrixMode(GL_PROJECTION)
     glPopMatrix()
@@ -438,8 +405,9 @@ def display():
     
     if game_state == 'playing':
         glLoadIdentity()
-        glRotatef(35.264, 1.0, 0.0, 0.0)
-        glRotatef(45.0, 0.0, 1.0, 0.0)
+        # Top-down view for "Foosball/Tactical" feel
+        # Eye at (0, 100, 50), looking at (0,0,0), Up (0,1,0)
+        gluLookAt(0, 100, 50, 0, 0, 0, 0, 1, 0)
         
         draw_field()
         draw_goal(-FIELD_W+2)
@@ -448,58 +416,57 @@ def display():
         # Draw Agents
         for a in agents:
             glPushMatrix()
-            glTranslatef(a.x, 1.0, a.z)
+            glTranslatef(a.x, 1.5, a.z)
             
-            if a.is_user:
-                glColor3f(0.2, 0.2, 1.0) # Blue for User
-            elif a.team == 'red': 
+            if a.team == 'red': 
                 glColor3f(0.9, 0.1, 0.1)
             else: 
-                glColor3f(0.9, 0.9, 0.9) # White
+                glColor3f(0.9, 0.9, 0.9)
                 
-            glutSolidCube(1.8)
+            glutSolidCube(3.0)
+            
+            # Direction Indicator
+            glBegin(GL_LINES)
+            glColor3f(1, 1, 0)
+            glVertex3f(0, 0, 0)
+            glVertex3f(a.dir_x*3, 0, a.dir_z*3)
+            glEnd()
+            
             glPopMatrix()
         
-        # Draw Ball (Yellow)
+        # Draw Ball
         glPushMatrix()
-        glTranslatef(ball_pos[0], 1.0, ball_pos[1])
-        glColor3f(1.0, 1.0, 0.0)
-        glutSolidSphere(1.0, 16, 16)
+        glTranslatef(ball_pos[0], 1.5, ball_pos[1])
+        glColor3f(1.0, 0.0, 1.0) # Hot Pink for high contrast
+        glutSolidSphere(1.5, 16, 16)
         glPopMatrix()
         
         draw_scoreboard()
         
     elif game_state == 'intro':
-        draw_credits()
+        draw_intro()
     
     glutSwapBuffers()
 
 def keyboard(key, x, y):
-    global game_state, start_time, red_score, white_score, side_multiplier, half_time_occurred, ball_pos, ball_vel, key_states
+    global game_state, start_time, red_score, white_score, ball_pos, ball_vel, key_states, ball_owner
     
+    try:
+        k = key.decode('utf-8').lower()
+    except:
+        return
+
     if game_state == 'intro':
-        if key == b' ' or key == b'\r': # Space or Enter
+        if k == ' ':
             game_state = 'playing'
             start_time = glutGet(GLUT_ELAPSED_TIME)
-            # Reset Game State
             red_score = 0
             white_score = 0
-            side_multiplier = 1
-            half_time_occurred = False
-            ball_pos = [0, 0]
-            ball_vel = [0, 0]
             setup_teams()
-            print("Match Started!")
             
     elif game_state == 'playing':
-        try:
-            k = key.decode('utf-8').lower()
-            if k in key_states:
-                key_states[k] = True
-            if k == ' ':
-                key_states['space'] = True
-        except:
-            pass
+        if k in key_states:
+            key_states[k] = True
 
 def keyboard_up(key, x, y):
     global key_states
@@ -507,70 +474,88 @@ def keyboard_up(key, x, y):
         k = key.decode('utf-8').lower()
         if k in key_states:
             key_states[k] = False
-        if k == ' ':
-            key_states['space'] = False
     except:
         pass
 
+def special(key, x, y):
+    global key_states
+    if key == GLUT_KEY_UP: key_states['up'] = True
+    if key == GLUT_KEY_DOWN: key_states['down'] = True
+    if key == GLUT_KEY_LEFT: key_states['left'] = True
+    if key == GLUT_KEY_RIGHT: key_states['right'] = True
+
+def special_up(key, x, y):
+    global key_states
+    if key == GLUT_KEY_UP: key_states['up'] = False
+    if key == GLUT_KEY_DOWN: key_states['down'] = False
+    if key == GLUT_KEY_LEFT: key_states['left'] = False
+    if key == GLUT_KEY_RIGHT: key_states['right'] = False
+
 def update(value):
-    global ball_pos, ball_vel, red_score, white_score, game_state, start_time, half_time_occurred, side_multiplier
-    
-    current_time = glutGet(GLUT_ELAPSED_TIME)
+    global ball_pos, ball_vel, red_score, white_score, game_state, ball_owner
     
     if game_state == 'playing':
-        elapsed = current_time - start_time
-        
-        # Halftime Check
-        if not half_time_occurred and elapsed > HALF_TIME_DURATION:
-            half_time_occurred = True
-            side_multiplier = -1
-            setup_teams() # Switch sides
-            ball_pos = [0, 0]
-            ball_vel = [0, 0]
-            print("Halftime! Switching Sides.")
-            
-        # Game Over Check
+        elapsed = glutGet(GLUT_ELAPSED_TIME) - start_time
         if elapsed > GAME_DURATION:
             game_state = 'intro'
-            print("Match Ended. Returning to Credits.")
         
         # Update Agents
         for a in agents:
             a.update()
         
-        # Ball Physics
-        ball_pos[0] += ball_vel[0]
-        ball_pos[1] += ball_vel[1]
-        ball_vel[0] *= BALL_FRICTION
-        ball_vel[1] *= BALL_FRICTION
-        
-        # Wall Bounce
-        if ball_pos[1] > FIELD_H or ball_pos[1] < -FIELD_H:
-            ball_vel[1] *= -1
-            ball_pos[1] = max(-FIELD_H, min(FIELD_H, ball_pos[1]))
-        
-        # Goals
-        if ball_pos[0] > FIELD_W:
-            red_score += 1
-            reset_game('red')
-        elif ball_pos[0] < -FIELD_W:
-            white_score += 1
-            reset_game('white')
+        # Ball Physics (only if not owned)
+        if ball_owner is None:
+            ball_pos[0] += ball_vel[0]
+            ball_pos[1] += ball_vel[1]
+            ball_vel[0] *= BALL_FRICTION
+            ball_vel[1] *= BALL_FRICTION
             
+            # Wall Bounce
+            if ball_pos[1] > FIELD_H or ball_pos[1] < -FIELD_H:
+                ball_vel[1] *= -0.8
+                ball_pos[1] = max(-FIELD_H, min(FIELD_H, ball_pos[1]))
+            if ball_pos[0] > FIELD_W or ball_pos[0] < -FIELD_W:
+                # Goal Check
+                if abs(ball_pos[1]) < GOAL_WIDTH:
+                    if ball_pos[0] > FIELD_W:
+                        red_score += 1
+                        reset_game('red')
+                    else:
+                        white_score += 1
+                        reset_game('white')
+                else:
+                    # Bounce off back wall if not goal
+                    ball_vel[0] *= -0.8
+                    ball_pos[0] = max(-FIELD_W, min(FIELD_W, ball_pos[0]))
+
     glutPostRedisplay()
     glutTimerFunc(16, update, 0)
 
 if __name__ == "__main__":
-    setup_teams()
-    glutInit(sys.argv)
-    glutInitDisplayMode(GLUT_DOUBLE | GLUT_RGB | GLUT_DEPTH)
-    glutInitWindowSize(window_width, window_height)
-    glutCreateWindow(b"11v11 AI Football Simulation")
-    init()
-    glutDisplayFunc(display)
-    glutReshapeFunc(reshape)
-    glutKeyboardFunc(keyboard)
-    glutKeyboardUpFunc(keyboard_up)
-    glutTimerFunc(0, update, 0)
-    print("Simulation Loaded. Press SPACE to start.")
-    glutMainLoop()
+    print("Starting application...")
+    try:
+        glutInit(sys.argv)
+        print("GLUT Initialized.")
+        glutInitDisplayMode(GLUT_DOUBLE | GLUT_RGB | GLUT_DEPTH)
+        glutInitWindowSize(window_width, window_height)
+        window = glutCreateWindow(b"1v1 Football")
+        print(f"Window created: {window}")
+        if not window:
+            print("Failed to create window!")
+            sys.exit(1)
+        init()
+        print("OpenGL Initialized.")
+        glutDisplayFunc(display)
+        glutReshapeFunc(reshape)
+        glutKeyboardFunc(keyboard)
+        glutKeyboardUpFunc(keyboard_up)
+        glutSpecialFunc(special)
+        glutSpecialUpFunc(special_up)
+        glutTimerFunc(0, update, 0)
+        print("Entering Main Loop...")
+        glutMainLoop()
+    except Exception as e:
+        print(f"An error occurred: {e}")
+        import traceback
+        traceback.print_exc()
+        input("Press Enter to exit...")
